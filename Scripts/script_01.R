@@ -1,3 +1,9 @@
+
+
+# Load Libraries ----------------------------------------------------------
+
+
+
 library(tidyverse)
 library(glmmTMB)
 library(performance)
@@ -10,9 +16,19 @@ library(ggeffects)
 library(viridis)
 library(ggpubr)
 library(vegan)
+library(cowplot)
+library(png)        
+library(grid)
+library(pairwiseAdonis)
 
 
-df = read_csv("data/newdata/urchinabundance.csv") |> 
+
+
+# Load Data ---------------------------------------------------------------
+## And data wrangling
+
+
+df = read_csv("Data/urchinabundance.csv") |> 
   group_by(yearmonth, location, site, plot) |> 
   mutate(inside  = replace_na(inside, 0), outside = replace_na(outside, 0),
          yearmonth = as.character(yearmonth)) |> 
@@ -28,7 +44,7 @@ df = read_csv("data/newdata/urchinabundance.csv") |>
 
 head(df)
 
-community_matrix = read_csv("./data/community.csv") |> 
+community_matrix = read_csv("Data/community.csv") |> 
   mutate(period = factor(period, levels =c("baseline", "dieoff", "after 6mo", "after 12mo")),
          period = recode(period, 
                          "baseline" = "Pre-die-off", 
@@ -37,7 +53,7 @@ community_matrix = read_csv("./data/community.csv") |>
                          "after 12mo" = "1-year-post")) |> 
   dplyr::select(-...1)
 
-pcover = read_csv("./data/pcover.csv") |> 
+pcover = read_csv("Data/pcover.csv") |> 
   mutate(period = factor(period, levels =c("baseline", "dieoff", "after 6mo", "after 12mo")),
          period = recode(period, 
                          "baseline" = "Pre-die-off", 
@@ -49,22 +65,27 @@ pcover = read_csv("./data/pcover.csv") |>
          plot=as.numeric(plot))
 
 
-df_recr = read_csv("./data/recruitment.csv") 
+df_recr = read_csv("Data/recruitment.csv") 
 
 
-##Counts analysis####
 
+# Urchin Density Analaysis ------------------------------------------------
+
+#### Exploratory Plot
 ggplot(df, aes(period, density, fill = location))+
   #geom_boxplot(outliers = F)+
   geom_point(aes(color = location), position = position_dodge(width = .75))+
   geom_boxplot(outliers = F, alpha = 0.5)+
   theme_classic()
 
+
+## Change in Urchin Density % ----------------------------------------------
+
+
 urchins_counts_summary = df |> 
   group_by(period) |> 
   summarise(mean_c = mean(density), sd_c = sd(density))
 
-#Calculate rellative differences from Pre-die-off
 relative_differences <- urchins_counts_summary |>
   pivot_wider(names_from = period, values_from = c(mean_c, sd_c), 
               names_glue = "{.value}_{period}") |>
@@ -77,49 +98,46 @@ relative_differences <- urchins_counts_summary |>
                 relative_difference_post, `sd_c_Post-die-off`, 
                 relative_difference_year, `sd_c_1-year-post`)
 
-# View the results
-relative_differences
+print(relative_differences)
 
-pre_mean   <- 10.1685
-pre_sd     <- 26.6284
-early_mean <- 0.1064
-early_sd   <- 0.3429
+vals <- urchins_counts_summary |>
+  filter(period %in% c("Pre-die-off", "Early-die-off")) |>
+  transmute(tag = if_else(period == "Pre-die-off", "pre", "early"),
+            mean_c, sd_c) |>
+  pivot_wider(names_from = tag, values_from = c(mean_c, sd_c))
+
+pre_mean   <- 0.0582
+pre_sd     <- 0.153
+early_mean <- 0.000639
+early_sd   <- 0.00213
 n <- 95
 
-# convert SD -> SEM
-pre_sem   <- pre_sd   / sqrt(n)
+pre_sem   <- pre_sd / sqrt(n)
 early_sem <- early_sd / sqrt(n)
 
-# percent change (Early vs Pre)
 pct_diff <- 100 * ((early_mean / pre_mean) - 1)
 
-# propagated SEM for percent change
 se_pct <- 100 * sqrt( (early_sem / early_mean)^2 +
                         (pre_sem   / pre_mean)^2 )
 
-# 95% CI
 lwr95 <- pct_diff - 1.96 * se_pct
 upr95 <- pct_diff + 1.96 * se_pct
 
-pct_diff; se_pct; lwr95; upr95
+pre_sem; early_sem; pct_diff; se_pct; lwr95; upr95
+
+#### 99% decrease in urchins from before (pre) to post die-off
 
 
 
+## Urchin Density Models ----------------------------------------------------
 
 
-###
-#Models
-###
 
+### Tweedie Model -----------------------------------------------------------
 
-###Tweedie####
 
 density_1 = glmmTMB(density ~ location*period + (1|site), 
                     family = tweedie(), data = df)
-
-
-
-
 #Model check
 
 check_model(density_1)
@@ -131,11 +149,9 @@ SimulationOutput1 <- simulateResiduals(fittedModel = density_1,
 testDispersion(SimulationOutput1, 
                type = "DHARMa",
                plot = TRUE)
-#
 
-#Model summary and fit
-#Based on the summary, anova test and dredge, the best most parsimonious model 
-#includes only period and site
+
+
 summary(density_1)
 car::Anova(density_1)
 
@@ -149,6 +165,10 @@ top_invT = get.models(dr_invT, subset = top)[[1]]
 
 summary(top_invT)
 options(na.action = "na.omit")
+
+#Model summary and fit
+#Based on the summary, anova test and dredge, the best most parsimonious model 
+#includes only period and site
 
 
 #Final model for counts
@@ -166,7 +186,11 @@ testDispersion(SimulationOutput1,
 check_model(tweedie_periods)
 car::Anova(tweedie_periods)
 summary(tweedie_periods)
-#capture.output(summary(counts_periods), file="./tables/summary.counts.period.txt")
+
+
+### Predictions -------------------------------------------------------------
+
+
 
 gg.density_period = ggpredict(tweedie_periods, terms = c("period"), bias_correction = T) |> 
   rename(period = x, density = predicted)
@@ -177,12 +201,10 @@ print(as.data.frame(gg.density_period))
 model_means_tweediedensity = emmeans(object = tweedie_periods,
                                specs = "period")
 
-# pairs(model_means_tweediedensity, adjust = 'bonf')
 pairs(model_means_tweediedensity)
 
 contrast(model_means_tweediedensity)
 
-#capture.output(pairs(model_means_tweediedensity))
 # add letters to each mean
 model_means_cld_density = cld(object = model_means_tweediedensity,
                                Letters = letters,
@@ -192,10 +214,13 @@ gg.density_period2 <- merge(gg.density_period, model_means_cld_density, by = c("
 
 
 
+### Plots -------------------------------------------------------------------
+
+
 #plot of fit for location
 density_plot = ggplot(gg.density_period2, aes(period, density, colour = period))+
   geom_pointrange(aes(ymax = conf.high, ymin = conf.low), size = 1, linewidth = 2)+
-  geom_text(aes(label = .group, y = .1), # 'cover + 2' to position letters slightly above
+  geom_text(aes(label = .group, y = .1), 
             size = 6,hjust=.65)+
   scale_color_viridis(option = 'turbo', discrete = TRUE, 
                       labels = c(
@@ -213,11 +238,9 @@ density_plot = ggplot(gg.density_period2, aes(period, density, colour = period))
         axis.line = element_line(colour = "black"))
 density_plot
 
-library(cowplot)
-library(png)        # or use jpeg::readJPEG() if it's a JPEG
-library(grid)
 
-img <- readPNG("C:/Users/nicor/OneDrive - Florida International University/Documents/Git/urchin_community_dynamics/figs/Picture1.png")   # update path to your image
+
+img <- readPNG("Figs/Picture1.png")   
 image_plot <- ggdraw() + draw_image(img)
 
 
@@ -234,18 +257,18 @@ top_row <- ggarrange(
 final_plot <- ggarrange(
   top_row, 
   image_plot, 
-  labels = c("", "b)"),  # label only the bottom panel as c)
+  labels = c("", "b)"),  
   ncol = 1,
-  heights = c(1, 1)  # adjust if image is too large/small
+  heights = c(1, 1)  
 )
 
 
 final_plot
 
-#ggsave('figs/newfigs/urchinanalysis_report_plots.png', units = 'in', width = 12, height = 12, dpi = 600)
-
 
 ## Benthic Cover Analysis --------------------------------------------------
+
+## Data wrangling ###
 
 coral = pcover |> 
   filter(category %in% c("coral"))|> 
@@ -262,50 +285,34 @@ sponge = pcover |>
   mutate(period = factor(period, levels = c("Pre-die-off", "Early-die-off", "Post-die-off", "1-year-post")))
 
 
-## Exploratory analysis ####
-
-ggplot(coral, aes(period, percentcover, fill=period)) +
-  geom_boxplot()+
-  facet_wrap(~location)+
-  scale_fill_viridis_d()
-
-ggplot(algae, aes(period, percentcover, fill=period)) +
-  geom_violin()+
-  facet_wrap(~location)+
-  scale_fill_viridis_d()
-
-ggplot(sponge, aes(period, percentcover, fill=period)) +
-  geom_violin()+
-  facet_wrap(~location)+
-  scale_fill_viridis_d()
-
-
 # Univariate Analysis -----------------------------------------------------
 
-###Beta models####
-
-#### Corals ####
 
 
-coralbeta = glmmTMB(percentcover ~ period * location + (1|site), 
+## Corals ------------------------------------------------------------------
+
+
+
+
+### Model -------------------------------------------------------------------
+
+
+
+coralbeta = glmmTMB(percentcover ~ period + (1|site), 
                      family = beta_family(), data = coral)
-
-options(na.action = "na.fail")
-dr_coral = dredge(coralbeta) |> 
-  filter(delta < 4)
-top = which.min(dr_coral$df)
-top_coral = get.models(dr_coral, subset = top)[[1]]
-summary(top_coral)
-options(na.action = "na.omit")
 
 
 
 check_model(coralbeta)
-#capture.output(summary(coralbeta2), file="./tables/summary.coral.txt")
+
 
 summary(coralbeta)
 performance(coralbeta)
 car::Anova(coralbeta)
+
+
+### Predictions -------------------------------------------------------------
+
 
 
 gg.coralperiod <-ggpredict(coralbeta, terms = c("period")) |> 
@@ -323,10 +330,15 @@ model_means_cld_coralperiodbeta = cld(object = model_means_coralperiodbeta,
 
 gg.coralperiod <- merge(gg.coralperiod, model_means_cld_coralperiodbeta, by = c("period"))
 print(gg.coralperiod)
+
+
+### Plot --------------------------------------------------------------------
+
+
 cor = ggplot(gg.coralperiod, aes(period, cover*100, colour = period))+
   geom_pointrange(aes(ymax = conf.high*100, ymin = conf.low*100), size = 1, linewidth = 2,
                   position = position_dodge(width = 0.5))+
-  geom_text(aes(label = .group,y=1.93 # Set y based on location
+  geom_text(aes(label = .group,y=1.93 
   ), show.legend = F, size = 6,
   position = position_dodge(width = 0.5))+
   labs(x = NULL, y = "% Coral Cover",color= "period")+
@@ -334,7 +346,6 @@ cor = ggplot(gg.coralperiod, aes(period, cover*100, colour = period))+
     option = 'turbo'
   )+
   geom_hline(yintercept = 0, linetype = 2, color = "red") +
-  # scale_x_continuous(breaks = c(0, 5, 10, 15, 20, 25, 30)) +
   theme(axis.text = element_text(size = 14, face = "bold", colour = "black"),
         axis.title = element_text(size = 16, face = "bold", colour = "black"),
         plot.title = element_text(size = 16, face = "bold", colour = "black"),
@@ -345,24 +356,18 @@ cor = ggplot(gg.coralperiod, aes(period, cover*100, colour = period))+
         panel.background = element_blank(),
         legend.title = element_text(size = 14, face = "bold"),
         legend.text = element_text(size = 12),legend.position = "none",
-        axis.text.x = element_blank(),  # Remove x-axis text
+        axis.text.x = element_blank(),  
         axis.ticks.x = element_blank())
 cor
 
 
-####Algae####
+
+## Algae -------------------------------------------------------------------
+
+### Model -------------------------------------------------------------------
 
 algaebeta = glmmTMB(percentcover ~ period + (1|site), 
                     family = beta_family(), data = algae)
-
-options(na.action = "na.fail")
-dr_algae = dredge(algaebeta) |> 
-  filter(delta < 4)
-top = which.min(dr_algae$df)
-top_algae = get.models(dr_algae, subset = top)[[1]]
-summary(top_algae)
-options(na.action = "na.omit")
-
 
 
 check_model(algaebeta)
@@ -371,6 +376,7 @@ performance(algaebeta)
 
 car::Anova(algaebeta)
 
+### Predictions -------------------------------------------------------------
 
 gg.algaeperiod = ggpredict(algaebeta, terms = c("period")) |> 
   rename(period = x, cover = predicted)
@@ -389,6 +395,7 @@ print(gg.algaeperiod)
 
 
 
+### Plot --------------------------------------------------------------------
 
 alg <- ggplot(gg.algaeperiod, aes(period, cover*100, colour = period))+
   geom_pointrange(aes(ymax = conf.high*100, ymin = conf.low*100), size = 1, linewidth = 2,
@@ -400,8 +407,7 @@ alg <- ggplot(gg.algaeperiod, aes(period, cover*100, colour = period))+
   geom_text(aes(label=.group,  y=40,
   ), size=6,position = position_dodge(width = 0.5))+
   geom_hline(yintercept = 0, linetype = 2, color = "red") +
-  # scale_x_continuous(breaks = c(0, 5, 10, 15, 20, 25, 30)) +
-  theme(axis.text = element_text(size = 14, face = "bold", colour = "black"),
+   theme(axis.text = element_text(size = 14, face = "bold", colour = "black"),
         axis.title = element_text(size = 16, face = "bold", colour = "black"),
         plot.title = element_text(size = 16, face = "bold", colour = "black"),
         panel.grid.major = element_blank(),
@@ -409,27 +415,21 @@ alg <- ggplot(gg.algaeperiod, aes(period, cover*100, colour = period))+
         panel.grid.minor = element_blank(),
         panel.border = element_blank(),
         panel.background = element_blank(),legend.position = "none",
-        legend.title = element_text(size = 14, face = "bold"),  # Legend title size
+        legend.title = element_text(size = 14, face = "bold"),  
         legend.text = element_text(size = 12),
         ,
-        axis.text.x = element_blank(),  # Remove x-axis text
+        axis.text.x = element_blank(),  
         axis.ticks.x = element_blank())
 
 alg
 
-#### Sponge ####
 
-spongebeta = glmmTMB(percentcover ~ period*location + (1|site), 
+## Sponge ------------------------------------------------------------------
+
+### Model -------------------------------------------------------------------
+
+spongebeta = glmmTMB(percentcover ~ period + (1|site), 
                      family = beta_family(), data = sponge)
-options(na.action = "na.fail")
-dr_sponge = dredge(spongebeta) |> 
-  filter(delta < 4)
-top = which.min(dr_sponge$df)
-top_sponge = get.models(dr_sponge, subset = top)[[1]]
-summary(top_sponge)
-options(na.action = "na.omit")
-
-
 
 
 check_model(spongebeta)
@@ -442,6 +442,7 @@ emmeans_sponge_resp <- emmeans(spongebeta, ~ period, type = "response")
 emmeans_sponge_resp
 
 
+### Predictions -------------------------------------------------------------
 
 gg.spongebeta = ggpredict(spongebeta, terms = c("period")) |> 
   rename(period = x, cover = predicted)
@@ -454,6 +455,8 @@ model_means_cld_spongebeta = cld(object = model_means_spongebeta,
 gg.spongebeta <- merge(gg.spongebeta, model_means_cld_spongebeta, by = c("period"))
 print(gg.spongebeta)
 
+### Plot --------------------------------------------------------------------
+
 spo = ggplot(gg.spongebeta, aes(period, cover*100, colour = period))+
   geom_pointrange(aes(ymax = conf.high*100, ymin = conf.low*100), size = 1, linewidth = 2,
                   position =position_dodge(width = 0.5))+
@@ -463,8 +466,7 @@ spo = ggplot(gg.spongebeta, aes(period, cover*100, colour = period))+
   scale_color_viridis_d(
     option = 'turbo')+
   geom_hline(yintercept = 0, linetype = 2, color = "red") +
-  # scale_x_continuous(breaks = c(0, 5, 10, 15, 20, 25, 30)) +
-  theme(axis.text = element_text(size = 14, face = "bold", colour = "black"),
+theme(axis.text = element_text(size = 14, face = "bold", colour = "black"),
         axis.title = element_text(size = 16, face = "bold", colour = "black"),
         plot.title = element_text(size = 16, face = "bold", colour = "black"),
         panel.grid.major = element_blank(),
@@ -473,12 +475,17 @@ spo = ggplot(gg.spongebeta, aes(period, cover*100, colour = period))+
         panel.border = element_blank(),
         panel.background = element_blank(),
         legend.position = "none",
-        legend.title = element_text(size = 14, face = "bold"),  # Legend title size
+        legend.title = element_text(size = 14, face = "bold"), 
         legend.text = element_text(size = 12),
-        axis.text.x = element_blank(),  # Remove x-axis text
-        axis.ticks.x = element_blank())  # Remove x-axis ticks)
+        axis.text.x = element_blank(),  
+        axis.ticks.x = element_blank()) 
 
 spo
+
+
+#### Arranged plot -----------------------------------------------------------
+
+
 
 combined_plot <- ggarrange(cor, alg, spo,
                            labels = c("a)", "b)", "c)"),
@@ -489,64 +496,18 @@ combined_plot <- ggarrange(cor, alg, spo,
 
 combined_plot
 
-#ggsave('figs/benthic_cover.png', units = 'in', width = 14, height = 6, dpi = 600)
-
-# Combine datasets and add category labels
-combined_data <- bind_rows(
-  gg.spongebeta |> mutate(category = "Sponge Cover"),
-  gg.algaeperiod |> mutate(category = "Algae Cover"),
-  gg.coralperiod |> mutate(category = "Coral Cover")
-)
-
-# Define shape mapping: Assigning different shapes for each category
-shape_mapping <- c("Sponge Cover" = 1, "Algae Cover" = 2, "Coral Cover" = 5)  # 16 = filled circle, 17 = triangle, 18 = diamond
-
-summary(combined_data)
-
-
-ggplot(combined_data, aes(x = period, y = cover * 100, colour = period, shape = category)) +
-  geom_pointrange(aes(ymax = conf.high * 100, ymin = conf.low * 100), 
-                  size = 1, linewidth = 2, position = position_dodge(width = 0.5)) +
-  geom_point(size = 4, position = position_dodge(width = 0.5)) +
-  #geom_text(aes(label = .group), size = 6, position = position_dodge(), show.legend = FALSE) +
-  
-  # Define shapes for cover type (coral, algae, sponge)
-  scale_shape_manual(values = shape_mapping) +  
-  scale_color_viridis_d(option = 'turbo') +  
-  
-  # Set legend labels
-  labs(x = NULL, y = "% Cover", shape = "Cover Type", color = NULL) +  
-  
-  # Hide Period from the legend but keep Cover Type
-  guides(color = "none") +  
-  
-  geom_hline(yintercept = 0, linetype = 2, color = "red") +
-  
-  theme_minimal() +
-  theme(
-    axis.text = element_text(size = 14, face = "bold", colour = "black"),
-    axis.title = element_text(size = 16, face = "bold", colour = "black"),
-    legend.title = element_text(size = 14, face = "bold"),
-    legend.text = element_text(size = 12),
-    panel.grid.major = element_blank(),
-    axis.line = element_line(colour = "black"),
-    panel.grid.minor = element_blank(),
-    panel.border = element_blank(),
-    panel.background = element_blank()
-  )
 
 
 
 
-
-#ggsave('figs/univariate_plots.png', units = 'in', width = 14, height = 8, dpi = 600)
-
-
-# multivariate ------------------------------------------------------------
+# Multivariate Analysis ---------------------------------------------------
 
 
+## NMDS --------------------------------------------------------------------
 
-nmds <- readRDS("./rds/nmds_results.rds")
+
+
+nmds <- readRDS("rds/nmds_results.rds")
 
 nmds_coords <- as.data.frame(nmds$points) 
 
@@ -571,24 +532,12 @@ nmdscom = ggplot(nmds_coords, aes(x = NMDS1, y = NMDS2, color = period)) +
   theme_classic() +   
   theme(axis.title = element_text(size = 14, face = "bold"),
         plot.title = element_text(size = 16, face = "bold"),
-        legend.title = element_text(size = 14, face = "bold"), # Increase legend title size
+        legend.title = element_text(size = 14, face = "bold"),
         legend.text = element_text(size = 12)) +
   scale_color_viridis_d(option = "turbo"
   )
 
-custom_colors <- c(
-  "Pre-die-off" = "#440154",      # Pre die-off
-  "Early-die-off" = "#3B528B",   # Early die-off
-  "Post-die-off" = "#21908C",     # Post die-off
-  "1-year-post" = "#FDE725"    # 1 year Post
-)
-
-custom_colors <- c(
-  "Pre-die-off"     = "#E69F00",  # orange
-  "Early-die-off"  = "#56B4E9",  # sky blue
-  "Post-die-off"    = "#009E73",  # bluish green
-  "1-year-post"  = "#D55E00"   # reddish orange
-)
+nmdscom
 
 custom_colors <- c(
   "Pre-die-off"     = "#0072B2",  # blue
@@ -600,7 +549,7 @@ custom_colors <- c(
 
 nmdscom <- ggplot(nmds_coords, aes(x = NMDS1, y = NMDS2, color = period)) +  
   geom_polygon(data = hulls, aes(x = NMDS1, y = NMDS2, fill = period, group = period),
-               alpha = 0.2, color = NA) +  # fill with transparency, no border
+               alpha = 0.2, color = NA) +  
   geom_point(size = 3, alpha = 0.7) +  
   labs(title = "NMDS of Community Data", x = "NMDS 1", y = "NMDS 2", color = "Periods") +
   annotate("text", x = Inf, y = Inf, hjust = 1.0, vjust = 1.1,
@@ -612,15 +561,16 @@ nmdscom <- ggplot(nmds_coords, aes(x = NMDS1, y = NMDS2, color = period)) +
         legend.title = element_text(size = 14, face = "bold"),
         legend.text = element_text(size = 12)) +
   scale_color_manual(values = custom_colors) +
-  scale_fill_manual(values = custom_colors, guide = "none")  # Optional: hide fill legend
-
+  scale_fill_manual(values = custom_colors, guide = "none")  
 
 nmdscom
 
-#ggsave("./figs/nmds_no location.png", units = "in", width = 12, height = 10, dpi =  600)
 
 
-##PERMANOVA####
+
+## PERMANOVA ---------------------------------------------------------------
+
+
 
 community_matrix <- pcover |>
   mutate(plot = as.numeric(plot), site = as.numeric(site),location = as.factor(location)) |>
@@ -635,9 +585,6 @@ community_matrix <- pcover |>
 distance_matrix <- vegdist(community_matrix[4:7], method = "bray") 
 
 
-
-### withOUT Locatoin ####
-
 permanova_results <- adonis2(distance_matrix ~ period, 
                              data = community_matrix, 
                              permutations = 999,
@@ -649,13 +596,22 @@ permanova_results
 summary(permanova_results)
 
 # Perform pairwise comparisons for 'period'
-pairwise_results_period <- pairwise.adonis2(distance_matrix ~ period, data = community_matrix, nperm = 999, p.method = "bonferroni")
+pairwise_results_period <- pairwiseAdonis::pairwise.adonis2(distance_matrix ~ period, data = community_matrix, nperm = 999, p.method = "bonferroni")
 
 pairwise_results_period
 
 
 
-# Urchins and Algae Model -------------------------------------------------
+
+# Log Resonse Ratios ------------------------------------------------------
+
+
+
+## Urchins and Algae  -------------------------------------------------
+
+
+### Data wrangle ------------------------------------------------------------
+
 
 
 cover2<-pcover |> 
@@ -665,7 +621,7 @@ cover2<-pcover |>
 algae2 = algae |> 
   dplyr::select(-yearmonth,-category) |> 
   mutate(plot = as.character(plot), site= as.character(site),
-         plot = sub("^0+", "", plot),  # Remove leading zeros from 'plot'
+         plot = sub("^0+", "", plot),  
          site = sub("^0+", "", site),
          location = as.factor(location),
          plot = as.factor(plot),
@@ -676,7 +632,7 @@ colSums(is.na(algae2))
 
 urchins_counts2 = df |> 
   mutate(plot = as.character(plot),site=as.character(site),
-         plot = sub("^0+", "", plot),  # Remove leading zeros from 'plot'
+         plot = sub("^0+", "", plot),  
          site = sub("^0+", "", site),
          plot = as.factor(plot),
          site = as.factor(site)) |> 
@@ -698,12 +654,14 @@ algaeratiodf = left_join(log_algae, urchins_counts2, by = c("plot", "site", "loc
   rename(pre = `Pre-die-off`)
 
 
-m4 = glmmTMB(log_ratio ~  pre * location + (1|site),
+### Model -------------------------------------------------------------------
+
+lrralgae = glmmTMB(log_ratio ~  pre * location + (1|site),
              family = gaussian, data = algaeratiodf)
 
 
 options(na.action = "na.fail")
-dr_invT = dredge(m4) |> 
+dr_invT = dredge(lrralgae) |> 
   filter(delta < 4)
 
 top = which.min(dr_invT$df)
@@ -722,7 +680,7 @@ check_model(algaeratiomodel)
 car::Anova(algaeratiomodel)
 summary(algaeratiomodel)
 
-
+### Predictions -------------------------------------------------------------
 
 gg.algaeratiomodel <- ggpredict(algaeratiomodel, terms = "pre [all]") |>
   rename(Density = x, cover = predicted)
@@ -731,14 +689,7 @@ gg.algaeratiomodel <- ggpredict(algaeratiomodel, terms = "pre [all]") |>
 
 print(as.data.frame(gg.algaeratiomodel))
 
-# Extract p-value of counts_baseline
-summary_algaeratiomodel <- summary(algaeratiomodel)
-p_value_counts <- summary_algaeratiomodel$coefficients$cond["pre", "Pr(>|z|)"]
-
-# Format p-value for display
-p_value_countslabel <- paste0("p = ", formatC(p_value_counts, format = "e", digits = 2))
-
-
+### Plot --------------------------------------------------------------------
 
 ratiocounts = ggplot(gg.algaeratiomodel, aes(Density, cover)) +
   geom_line() +
@@ -756,21 +707,16 @@ ratiocounts = ggplot(gg.algaeratiomodel, aes(Density, cover)) +
         panel.background = element_blank(),
         legend.title = element_text(size = 14, face = "bold"),
         legend.text = element_text(size = 12)) 
-# geom_text(x = 24.5, 
-#           y = 2.1 , 
-#           label = "p = 0.0045", 
-#           size = 6, color = "black")
-
 
 ratiocounts
 
 
 
-#ggsave('figs/newfigs/urchin_algae_model2.png', units = 'in', width = 12, height = 12, dpi = 600)
 
 
-# recruitment  ------------------------------------------------------------
+## Recruitment  ------------------------------------------------------------
 
+### Data wrangle ------------------------------------------------------------
 
 log_recr <- df_recr |> 
   pivot_wider(names_from = period, values_from = recruits) |> 
@@ -786,6 +732,9 @@ ratiodf_recr = left_join(log_recr, urchins_counts2, by = c("plot", "site", "loca
   mutate(pre = `Pre-die-off`)
 
 
+head(ratiodf_recr)
+
+### Model -------------------------------------------------------------------
 
 rcr_ratio = glmmTMB(log_ratio ~  pre * location + (1|site),
              family = gaussian, data = ratiodf_recr)
@@ -822,14 +771,19 @@ check_model(rcrloc)
 summary(rcrloc)
 car::Anova(rcrloc)
 
+##pre values are the better model
 
+### Predictions -------------------------------------------------------------
 
 gg.ratiomodel = ggpredict(rcrpre, terms = c("pre [all]")) |> 
   rename(counts = x, recruits = predicted)
 
 
+print(as.data.frame(gg.ratiomodel))
 
-ratiocounts = ggplot(gg.ratiomodel, aes(counts, recruits)) +
+### Plot --------------------------------------------------------------------
+
+ratiorecru = ggplot(gg.ratiomodel, aes(counts, recruits)) +
   geom_line() +
   geom_ribbon(aes(ymin = conf.low, ymax = conf.high), fill = "#2A788EFF", alpha = 0.2) +
   scale_fill_viridis_c(option = "D")+
@@ -850,13 +804,16 @@ ratiocounts = ggplot(gg.ratiomodel, aes(counts, recruits)) +
             label = "p = 0.0045", 
             size = 6, color = "black")
 
-ratiocounts
-ggsave('figs/newfigs/urchin_recruitment_model2.png', units = 'in', width = 12, height = 12, dpi = 600)
+ratiorecru
+
 
 
 
 
 # Sponges and Urchins -----------------------------------------------------
+
+
+### Data wrangle ------------------------------------------------------------
 
 sponge2 = sponge |> 
   dplyr::select(-yearmonth,-category) |> 
@@ -890,7 +847,7 @@ ratiodf2 = left_join(log_sponge, urchins_counts2, by = c("plot", "site", "locati
 head(ratiodf2)
 
 
-
+### Model -------------------------------------------------------------------
 
 ms = glmmTMB(log_ratio ~  pre * location + (1|site),
              family = gaussian, data = ratiodf2)
@@ -911,11 +868,13 @@ check_model(ms)
 car::Anova(ms)
 summary(ms)
 
+### Predictions -------------------------------------------------------------
 
 gg.ratiomodel4 = ggpredict(ms, terms = c("location")) |> 
   rename(location = x, cover = predicted)
 
 plot(ggpredict(ms, terms = c("location ")))
+
 
 # Correlation analysis ----------------------------------------------------
 
@@ -1034,5 +993,4 @@ ggarrange(AC,AM,DA,
           legend = "bottom",
           labels = c("a)", "b)", "c)"))
 
-#ggsave('figs/newfigs/correlation_plots.png', units = 'in', width = 18, height = 10, dpi = 600)
 
