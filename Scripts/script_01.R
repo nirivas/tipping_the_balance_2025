@@ -547,14 +547,18 @@ custom_colors <- c(
 )
 
 
-nmdscom <- ggplot(nmds_coords, aes(x = NMDS1, y = NMDS2, color = period)) +  
+nmdscom <- ggplot(nmds_coords, aes(x = NMDS1, y = NMDS2)) +  
   geom_polygon(data = hulls, aes(x = NMDS1, y = NMDS2, fill = period, group = period),
                alpha = 0.2, color = NA) +  
-  geom_point(size = 3, alpha = 0.7) +  
+  geom_point(size = 3, alpha = 0.7, aes(color = period)) +  
   labs(title = "NMDS of Community Data", x = "NMDS 1", y = "NMDS 2", color = "Periods") +
   annotate("text", x = Inf, y = Inf, hjust = 1.0, vjust = 1.1,
            label = paste("Stress =", round(stress_value, 4)), 
            size = 5, fontface = "bold") + 
+  geom_segment(data = vec, aes(x = 0, xend = NMDS1, y = 0, yend = NMDS2),
+               arrow = arrow(length = unit(0.25, "cm")), color = "black") +
+  ggrepel::geom_text_repel(data = vec, aes(x = NMDS1, y = NMDS2, label = spp),
+                           size = 4) +
   theme_classic() +   
   theme(axis.title = element_text(size = 14, face = "bold"),
         plot.title = element_text(size = 16, face = "bold"),
@@ -564,6 +568,119 @@ nmdscom <- ggplot(nmds_coords, aes(x = NMDS1, y = NMDS2, color = period)) +
   scale_fill_manual(values = custom_colors, guide = "none")  
 
 nmdscom
+
+ggsave("figs/nMDS_community.png", plot = nmdscom, units="in", width=16, height=12, dpi=600)
+
+# multivariate----
+
+# m_b = df_b |> 
+#   
+#   filter(impact == 'Inside') |> 
+#   
+#   mutate(id = paste(station, year, sep = '_')) |> 
+#   
+#   select(id, `Mojarra spp`:`Spanish sardine`) |> 
+#   
+#   column_to_rownames(var = 'id')
+# 
+# vars = df_b |> 
+#   
+#   filter(impact == 'Inside') |> 
+#   
+#   select(station, year, dieoff, impact)
+# 
+# # site = tibble(station = c(146, 168, 241, 266))
+# 
+# pb = adonis2(m_b ~ dieoff, data = vars)
+# 
+# nmds_b = metaMDS(m_b, distance = "bray", k = 2, try = 100)
+
+# vectors 
+
+m_b = community_matrix |> 
+  dplyr::select(-1,-2,-3)
+
+sp.fit = envfit(nmds, m_b, permutations = 999)
+
+vec = tibble(spp = rownames(scores(sp.fit, display = "vectors")),
+             
+             NMDS1 = scores(sp.fit, display = "vectors")[,1],
+             
+             NMDS2 = scores(sp.fit, display = "vectors")[,2],
+             
+              p = sp.fit$vectors$pvals) 
+   
+  # 
+  # filter(p < 0.05)
+
+
+
+# df = tibble(vars, data.frame(nmds_b[['points']]))
+# 
+# hull = df  |> 
+#   
+#   group_by(dieoff) |> 
+#   
+#   slice(chull(MDS1, MDS2))
+# 
+# # nmds plot
+# 
+# ggplot(df, aes(MDS1, MDS2))+
+#
+#   geom_polygon(data = hull, aes(color = dieoff, fill = dieoff), alpha = 0.5) +
+#
+#   geom_point(aes(shape = as.factor(station),
+#
+#                  color = dieoff, fill = dieoff), size = 3)+
+#
+#   labs(x = 'NMDS1', y = 'NMDS2',
+#
+#        color = 'Die-off', fill = 'Die-off', shape = 'Station')+
+#
+#   scale_color_manual(values = c('darkgreen', 'burlywood2'))+
+#
+#   scale_fill_manual(values = c('darkgreen', 'burlywood2'))+
+#
+#   geom_segment(data = vec,
+#
+#                aes(x = 0, xend = MDS1, y = 0, yend = MDS2),
+#
+#                arrow = arrow(length = unit(0.25, "cm")), color = "black") +
+#
+#   ggrepel::geom_text_repel(data = vec, aes(x = MDS1, y = MDS2, label = spp),
+#
+#                            size = 4)+
+#
+#   theme_bw()+
+#
+#   theme(axis.title = element_text(size = 14),
+#
+#         axis.text.y = element_text(size = 14, colour = "black"),
+#
+#         axis.text.x = element_text(size = 12, colour = "black"),
+#
+#         plot.title = element_text(size = 14, hjust=0.5),
+#
+#         panel.grid.major = element_blank(),
+#
+#         panel.grid.minor = element_blank(),
+#
+#         legend.position = 'right',
+#
+#         legend.title = element_text(size = 14),
+#
+#         strip.text.x = element_text(size = 14),
+#
+#         legend.text = element_text(size = 12))
+
+# ggsave("figs/nMDS.png", units="in", width=8, height=6, dpi=600)
+
+#ggsave("figs/nMDS_sppV.png", units="in", width=8, height=6, dpi=600)
+
+
+
+
+
 
 
 
@@ -594,6 +711,14 @@ permanova_results <- adonis2(distance_matrix ~ period,
 
 permanova_results
 summary(permanova_results)
+
+#Test homogeneity of multivariate dispersions
+dispersion <- betadisper(distance_matrix, group = community_matrix$period)
+
+# Permutation test for differences in dispersion
+permdisp_results <- permutest(dispersion, permutations = 999)
+
+permdisp_results
 
 # Perform pairwise comparisons for 'period'
 pairwise_results_period <- pairwiseAdonis::pairwise.adonis2(distance_matrix ~ period, data = community_matrix, nperm = 999, p.method = "bonferroni")
@@ -849,7 +974,7 @@ head(ratiodf2)
 
 ### Model -------------------------------------------------------------------
 
-ms = glmmTMB(log_ratio ~  pre * location + (1|site),
+ms = glmmTMB(log_ratio ~  pre  + (1|site),
              family = gaussian, data = ratiodf2)
 
 
