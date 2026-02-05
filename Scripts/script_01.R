@@ -569,7 +569,6 @@ nmdscom <- ggplot(nmds_coords, aes(x = NMDS1, y = NMDS2)) +
 
 nmdscom
 
-ggsave("figs/nMDS_community.png", plot = nmdscom, units="in", width=16, height=12, dpi=600)
 
 # multivariate----
 
@@ -673,9 +672,7 @@ vec = tibble(spp = rownames(scores(sp.fit, display = "vectors")),
 #
 #         legend.text = element_text(size = 12))
 
-# ggsave("figs/nMDS.png", units="in", width=8, height=6, dpi=600)
 
-#ggsave("figs/nMDS_sppV.png", units="in", width=8, height=6, dpi=600)
 
 
 
