@@ -3,13 +3,16 @@
 
 cff-version: 1.2.0
 title: >-
-  Data and code for Santos et al. "Trophic niche dynamics of two fish mesoconsumers in adjacent coastal habitats with varying nutrient regimes"
+  Data and code for Rivas et al., "Tipping the balance: Reef community shifts after a regional urchin population collapse"
 message: Please cite this dataset using these metadata.
 type: dataset
 authors:
-  - given-names: Rolando O. Santos
+  - given-names: Nicolas Rivas
   - given-names: W. Ryan James
+  - given-names: Valentina Bautista
+  - given-names: Madison Sandquist
+  - given-names: Arianna F. Guerriero
+  - given-names: Silvana B. Arias
+  - given-names: Alex E. Mercado-Molina
   - given-names: Jennifer S. Rehage
-  - given-names: Cody W. Eggenberger
-  - given-names: Justin S. Lesser
-  - given-names: Christopher J. Madden
+  - given-names: Rolando O. Santos
