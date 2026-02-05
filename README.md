@@ -1,5 +1,5 @@
 # Data and code for Rivas et al., 2026
-Title: Tipping the balance: Reef community shifts after a regional urchin population collapse
+Title: Tipping the balance: Reef community shifts after a regional urchin population collapse https://doi.org/10.5281/zenodo.18500375
 
 Authors: Rivas, Nicolas; James, W. Ryan; Bautista, Valentina; Sandquist, Madison; Guerriero, Arianna F.; Arias, Silvana B.; Mercado-Molina, Alex E.; Rehage, Jennifer; Santos, Rolando O.
 
